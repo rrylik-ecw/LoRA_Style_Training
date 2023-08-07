@@ -1,0 +1,10 @@
+safetensors
+transformers
+diffusers
+accelerate
+accelerate>=0.20.3
+xformers==0.0.16
+ijson
+nltk==3.6.3
+sentence_transformers
+scikit-image
