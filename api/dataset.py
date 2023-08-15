@@ -215,7 +215,8 @@ class ImageUploader:
         image_bytes = io.BytesIO()
         image.save(image_bytes, format='PNG')
         image_bytes.seek(0)
-        image_name = str(index)
+        #image_name = str(index)
+        image_name = str(item['id'][0])
         image_key = f"{self.subfolder}/{image_name}.png"
         self.s3_client.put_object(Bucket=self.bucket_name, Key=image_key, Body=image_bytes)
         text_content = self.image_type + ", " + name.lower()
@@ -268,7 +269,8 @@ class BWImageUploader:
         image_bytes = io.BytesIO()
         image_binary.save(image_bytes, format='PNG')
         image_bytes.seek(0)
-        image_name = str(index)
+        #image_name = str(index)
+        image_name = str(item['id'][0])
         image_key = f"{self.subfolder}/{image_name}.png"
         self.s3_client.put_object(Bucket=self.bucket_name, Key=image_key, Body=image_bytes)
         text_content = self.image_type + ", " + name.lower()
@@ -279,3 +281,98 @@ class BWImageUploader:
         self.upload_image(self.items[0], 0)
         with ThreadPoolExecutor() as executor:
             executor.map(self.upload_image, self.items, range(len(self.items)))
+            
+            
+class S3FileProcessor:
+    def __init__(self, s3_bucket, s3_client=None):
+        self.s3_bucket = s3_bucket
+        self.s3_client = s3_client or boto3.client('s3')
+
+    def download_files(self, subfolder, temp_folder):
+        if not os.path.exists(temp_folder):
+            os.makedirs(temp_folder)
+        
+        downloaded_files = []
+        continuation_token = None
+
+        while True:
+            list_objects_params = {
+                'Bucket': self.s3_bucket,
+                'Prefix': subfolder,
+                'MaxKeys': 1000,
+            }
+
+            if continuation_token:
+                list_objects_params['ContinuationToken'] = continuation_token
+
+            s3_objects = self.s3_client.list_objects_v2(**list_objects_params)
+            if 'Contents' in s3_objects:
+                for obj in s3_objects['Contents']:
+                    file_key = obj['Key']
+                    file_name = os.path.basename(file_key)
+                    if file_name == "":
+                        continue
+                    local_path = os.path.join(temp_folder, file_name)
+                    self.s3_client.download_file(self.s3_bucket, file_key, local_path)
+                    downloaded_files.append(local_path)
+            
+            if 'NextContinuationToken' in s3_objects:
+                continuation_token = s3_objects['NextContinuationToken']
+            else:
+                break
+
+        return downloaded_files
+
+    def get_file_extension(self, file_path):
+        _, file_extension = os.path.splitext(file_path)
+        return file_extension
+
+    
+    def convert_image(self, image):
+        if image.mode == 'RGBA':
+            background = Image.new('RGBA', image.size, (255, 255, 255, 255))
+            image = Image.alpha_composite(background, image)
+            image = image.convert('RGB')
+        return image
+
+    def convert_image_to_bw(self, image_gray):
+        image_array = np.array(image_gray)
+        threshold = threshold_otsu(image_array)
+        image_bw = image_gray.point(lambda x: 0 if x < threshold else 255, mode='L')
+        return image_bw
+    
+    def process_files(self, files, temp_folder, mode):
+        processed_files = []
+        print(len(files))
+        for file in files:            
+            if self.get_file_extension(file) == '.png':
+                original_image = Image.open(file)
+                if mode == 1:                    
+                    image = self.convert_image(original_image)
+                else:
+                    image = self.convert_image(original_image)
+                    image = image.convert('L') 
+                    image = self.convert_image_to_bw(image)
+                #processed_file = f'processed_{os.path.basename(file)}'
+                #processed_path = os.path.join(temp_folder, processed_file)
+                image.save(file)
+            processed_files.append(file)
+        return processed_files
+
+    def upload_files(self, subfolder, files):
+        for file in files:
+            s3_key = os.path.join(subfolder, os.path.basename(file))
+            self.s3_client.upload_file(file, self.s3_bucket, s3_key)
+
+    def delete_temp_folder(self, temp_folder):
+        for file in os.listdir(temp_folder):
+            file_path = os.path.join(temp_folder, file)
+            if os.path.isfile(file_path):
+                os.remove(file_path)
+        os.rmdir(temp_folder)
+
+    def process_and_upload(self, input_subfolder, output_subfolder, temp_folder, mode):
+        downloaded_files = self.download_files(input_subfolder, temp_folder)
+        processed_files = self.process_files(downloaded_files, temp_folder, mode)
+        self.upload_files(output_subfolder, processed_files)
+        self.delete_temp_folder(temp_folder)

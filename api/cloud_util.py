@@ -1,6 +1,7 @@
 import os
 import boto3
 import tarfile
+import glob
 
 
 def download_and_extract_tar_gz_file(bucket_name, object_key, destination_folder):
@@ -22,6 +23,27 @@ def download_and_extract_tar_gz_file(bucket_name, object_key, destination_folder
 
     # Remove the downloaded tar.gz file if needed
     os.remove(local_tar_gz_file_path)
+    
+    # Get a list of all files in the directory
+    files = glob.glob(os.path.join(destination_folder, '*'))
+
+    if len(files) <= 1:
+        print("No files to rename.")
+        return
+
+    # Sort files by modification time
+    files.sort(key=os.path.getmtime)
+
+    # Remove all files except the last one
+    for file in files[:-1]:
+        os.remove(file)
+
+    ## Rename the last file
+    #last_file = files[-1]
+    #new_name = "pytorch_lora_weights.bin"
+    #new_file_path = os.path.join(destination_folder, new_name)
+    #os.rename(last_file, new_file_path)
+    #print(f"Renamed '{last_file}' to '{new_file_path}'.")
     
     
 def upload_file_to_s3(local_file_path, bucket_name, subfolder_name, s3_destination_filename=None):
